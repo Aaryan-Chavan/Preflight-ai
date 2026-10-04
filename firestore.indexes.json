@@ -1,0 +1,17 @@
+{
+  "indexes": [
+    { "collectionGroup": "reports", "queryScope": "COLLECTION",
+      "fields": [ { "fieldPath": "riskLevel", "order": "ASCENDING" },
+                  { "fieldPath": "timestamp", "order": "DESCENDING" } ] },
+    { "collectionGroup": "reports", "queryScope": "COLLECTION",
+      "fields": [ { "fieldPath": "repository", "order": "ASCENDING" },
+                  { "fieldPath": "timestamp", "order": "DESCENDING" } ] },
+    { "collectionGroup": "reports", "queryScope": "COLLECTION",
+      "fields": [ { "fieldPath": "deviceId", "order": "ASCENDING" },
+                  { "fieldPath": "timestamp", "order": "DESCENDING" } ] },
+    { "collectionGroup": "reports", "queryScope": "COLLECTION",
+      "fields": [ { "fieldPath": "pushOutcome", "order": "ASCENDING" },
+                  { "fieldPath": "timestamp", "order": "DESCENDING" } ] }
+  ],
+  "fieldOverrides": []
+}
