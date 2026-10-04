@@ -12,4 +12,4 @@ reply = ollama.chat(
     messages=[{"role": "user", "content": 'Return JSON: {"ok": true}'}],
     format="json",
 )
-print("ollama replied:", reply["message"]["content"])
+print("ollama replied:", reply["message"]["content"])# Triggering AI code analysis
