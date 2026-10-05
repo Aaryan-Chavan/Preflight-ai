@@ -46,6 +46,7 @@ class ChangeSet(BaseModel):
     local_sha: str
     remote_sha: str
     files: List[FileChange] = Field(default_factory=list)
+    ml_risk_result: dict | None = None
 
 # -----------------------------------------------------------------------------
 # 2. Static Analysis Models (M6)

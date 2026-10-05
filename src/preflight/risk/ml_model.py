@@ -2,7 +2,7 @@ import json
 import os
 import numpy as np
 import xgboost as xgb
-from src.preflight.risk.feature_extractor import FeatureExtractor
+from preflight.risk.feature_extractor import FeatureExtractor
 
 class MLRiskAnalyzer:
     def __init__(self, models_dir="src/preflight/risk/models"):

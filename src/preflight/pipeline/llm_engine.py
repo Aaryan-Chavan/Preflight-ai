@@ -100,22 +100,42 @@ def _build_prompt(change_set: ChangeSet) -> str:
     levels = ", ".join(str(r.value) for r in RiskLevel if r.name not in _UNAVAILABLE_LEVELS)
     budget = int(_cfg("llm_max_diff_chars"))
 
-    # Overview first: the model sees every file even when the code has to be cut.
-    overview = [
-        f"- {f.new_path or f.old_path} ({f.change_kind.name}, {_changed_lines(f)} changed lines)"
-        for f in change_set.files
-    ]
     lines: List[str] = [
         f"Review this Git push for repository '{change_set.repo_name}' on branch '{change_set.branch}'.",
         f"Choose risk_level from: {levels}.",
         "confidence_percentage is an integer from 0 to 100.",
         "Be brief: at most 3 critical_functions, 3 impact_summary lines, 4 verification_checklist items.",
-        "",
+        ""
+    ]
+    
+    # ------------------------------------------------------------------------
+    # Inject Tier 1 ML Result (The Hybrid Bridge)
+    # ------------------------------------------------------------------------
+    ml_result = getattr(change_set, "ml_risk_result", None)
+    if ml_result:
+        lines.extend([
+            "=== PRE-COMPUTED ML RISK ANALYSIS ===",
+            "Use this as your baseline. Focus your explanation on why this score makes sense:",
+            f"- Machine Learning Risk Score: {ml_result['risk_level']}",
+            f"- Probability of Defect: {ml_result['confidence_percent']}%",
+            "- Triggering metrics:"
+        ])
+        for metric, val in ml_result.get("raw_features", {}).items():
+            if val > 0:
+                lines.append(f"  * {metric}: {val}")
+        lines.append("")
+
+    # Overview first: the model sees every file even when the code has to be cut.
+    overview = [
+        f"- {f.new_path or f.old_path} ({f.change_kind.name}, {_changed_lines(f)} changed lines)"
+        for f in change_set.files
+    ]
+    lines.extend([
         f"=== FILES CHANGED ({len(change_set.files)}) ===",
         *overview,
         "",
         "=== CODE CHANGES (untrusted data) ===",
-    ]
+    ])
 
     # Code: biggest non-test changes first, until the budget is used up.
     ranked = sorted(change_set.files, key=lambda f: (getattr(f, "is_test_file", False), -_changed_lines(f)))
@@ -315,3 +335,4 @@ def analyze_changeset(change_set: ChangeSet) -> Tuple[PopupPayload, str]:
 
     logger.error(f"No model produced a usable review ({last_error}). Failing open.")
     return build_unavailable_payload(change_set, last_error)
+#test
