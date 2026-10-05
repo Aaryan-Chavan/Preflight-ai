@@ -139,3 +139,4 @@ class Report(BaseModel):
     meta: ReportMetadata
     popup: PopupPayload
     detailed_markdown: Optional[str] = None
+#dashboard test
