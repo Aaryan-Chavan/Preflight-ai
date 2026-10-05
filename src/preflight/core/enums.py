@@ -5,6 +5,7 @@ class RiskLevel(str, Enum):
     LOW = "Low"
     MEDIUM = "Medium"
     HIGH = "High"
+    UNKNOWN = "Unknown"   # no analysis was produced
 
 class Severity(str, Enum):
     """Severity levels for static analysis findings and critical functions."""

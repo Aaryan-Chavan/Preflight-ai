@@ -29,6 +29,21 @@ class PreflightSettings(BaseSettings):
         default="http://127.0.0.1:11434", 
         description="Local URL for the Ollama inference server."
     )
+    llm_timeout_seconds: int = Field(
+        default=120, description="Max seconds to wait for one AI review. CPU-only: 120+. GPU: 30."
+    )
+    llm_max_diff_chars: int = Field(
+        default=6000, description="Max characters of code sent to the model."
+    )
+    llm_num_predict: int = Field(
+        default=500, description="Max tokens the model may write."
+    )
+    llm_num_ctx: int = Field(default=4096, description="Context window size in tokens.")
+    llm_keep_alive: str = Field(default="30m", description="How long Ollama keeps the model loaded.")
+    llm_num_thread: int = Field(default=0, description="CPU threads for the model. 0 = automatic.")
+    llm_ask_critical_functions: bool = Field(
+        default=False, description="If True, the model also writes the critical-functions list (slower)."
+    )
 
     # -------------------------------------------------------------------------
     # Pipeline Time Budgets (Tiered Latency)

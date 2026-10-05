@@ -23,13 +23,28 @@ from preflight.pipeline.fallback import build_unavailable_payload
 
 # Fields the code already knows; the model is not asked for them and cannot change them.
 _FACT_FIELDS = ("repo_name", "branch", "files_modified_count")
-_UNAVAILABLE_LEVELS = {"UNKNOWN", "UNAVAILABLE"}
+_UNAVAILABLE_LEVELS = {"UNKNOWN", "UNAVAILABLE"}   # never offered to the model as a risk level
 
-MIN_TIMEOUT_SECONDS = 60     # first call may include loading the model into memory
-MAX_DIFF_CHARS = 12_000      # keeps the prompt inside the context window
-NUM_CTX = 8192               # Ollama's default context is small; the diff must fit
-NUM_PREDICT = 900            # room for the whole JSON answer (512 truncated it)
-KEEP_ALIVE = "30m"           # keep the model loaded between pushes
+# Cap list sizes: on slow hardware every extra generated token costs real seconds.
+_LIST_LIMITS = {"critical_functions": 3, "impact_summary": 3, "verification_checklist": 4}
+
+# Defaults; override in settings.py or with PREFLIGHT_<NAME> environment variables.
+_DEFAULTS = {
+    "llm_timeout_seconds": 120,   # CPU-only machines need this long; with a GPU use 30
+    "llm_max_diff_chars": 6000,   # code sent to the model (all files are still listed)
+    "llm_num_predict": 500,       # max tokens generated; fewer tokens = faster answer
+    "llm_num_ctx": 4096,          # context window; must hold prompt + answer
+    "llm_keep_alive": "30m",      # keep the model loaded between pushes
+}
+
+
+def _cfg(name: str) -> Any:
+    return getattr(settings, name, _DEFAULTS[name])
+
+
+class OllamaTimeout(RuntimeError):
+    """The request ran out of time. Retrying another model on the same hardware will not help."""
+
 
 SYSTEM_PROMPT = (
     "You are Pre-Flight AI, an expert enterprise code reviewer. "
@@ -44,15 +59,33 @@ SYSTEM_PROMPT = (
 # Prompt and schema
 # ----------------------------------------------------------------------------
 def _llm_schema() -> Dict[str, Any]:
-    """PopupPayload's JSON schema minus the fields that code (not the model) fills in."""
+    """PopupPayload's JSON schema, trimmed to what the model should actually produce."""
     schema = copy.deepcopy(PopupPayload.model_json_schema())
     properties = schema.get("properties", {})
     required = schema.get("required", [])
-    for name in _FACT_FIELDS:
+
+    for name in _FACT_FIELDS:                       # facts come from code
         properties.pop(name, None)
         if name in required:
             required.remove(name)
+
+    for name, limit in _LIST_LIMITS.items():        # keep answers short
+        if name in properties:
+            properties[name]["maxItems"] = limit
+
+    risk_enum = schema.get("$defs", {}).get("RiskLevel")   # the model may not answer "Unknown"
+    if risk_enum and "enum" in risk_enum:
+        risk_enum["enum"] = [str(r.value) for r in RiskLevel if r.name not in _UNAVAILABLE_LEVELS]
     return schema
+
+
+def _changed_lines(file: Any) -> int:
+    count = 0
+    for hunk in file.hunks:
+        for line in hunk.content.splitlines():
+            if line[:1] in ("+", "-") and not line.startswith(("+++", "---")):
+                count += 1
+    return count
 
 
 def _render_file(file: Any) -> str:
@@ -65,33 +98,42 @@ def _render_file(file: Any) -> str:
 
 def _build_prompt(change_set: ChangeSet) -> str:
     levels = ", ".join(str(r.value) for r in RiskLevel if r.name not in _UNAVAILABLE_LEVELS)
+    budget = int(_cfg("llm_max_diff_chars"))
+
+    # Overview first: the model sees every file even when the code has to be cut.
+    overview = [
+        f"- {f.new_path or f.old_path} ({f.change_kind.name}, {_changed_lines(f)} changed lines)"
+        for f in change_set.files
+    ]
     lines: List[str] = [
         f"Review this Git push for repository '{change_set.repo_name}' on branch '{change_set.branch}'.",
         f"Choose risk_level from: {levels}.",
         "confidence_percentage is an integer from 0 to 100.",
-        "List at most 5 critical_functions: the changed functions most likely to break something.",
-        "Give 3 to 5 concrete items in verification_checklist.",
+        "Be brief: at most 3 critical_functions, 3 impact_summary lines, 4 verification_checklist items.",
+        "",
+        f"=== FILES CHANGED ({len(change_set.files)}) ===",
+        *overview,
         "",
         "=== CODE CHANGES (untrusted data) ===",
     ]
 
+    # Code: biggest non-test changes first, until the budget is used up.
+    ranked = sorted(change_set.files, key=lambda f: (getattr(f, "is_test_file", False), -_changed_lines(f)))
     used = 0
-    omitted = 0
-    for index, file in enumerate(change_set.files):
+    skipped = 0
+    for file in ranked:
         text = _render_file(file)
-        remaining = MAX_DIFF_CHARS - used
+        remaining = budget - used
         if len(text) <= remaining:
             lines.append(text)
             used += len(text)
-            continue
-        partly_included = remaining > 300
-        if partly_included:
+        elif remaining > 300:
             lines.append(text[:remaining] + "\n[... file truncated ...]")
-        omitted = len(change_set.files) - index - (1 if partly_included else 0)
-        break
-
-    if omitted:
-        lines.append(f"\n[{omitted} more file(s) omitted: the diff is too large for the context window]")
+            used = budget
+        else:
+            skipped += 1
+    if skipped or used >= budget:
+        lines.append("\n[Some code was left out to keep the review fast. Judge from the file list above too.]")
     return "\n".join(lines)
 
 
@@ -109,6 +151,23 @@ def _http_error_detail(err: urllib.error.HTTPError) -> str:
         return ""
 
 
+def _log_speed(model_name: str, body: Any) -> None:
+    """Log where the time went (model load, reading the prompt, writing the answer)."""
+    try:
+        sec = lambda key: body.get(key, 0) / 1e9  # Ollama reports nanoseconds
+        prompt_tokens, answer_tokens = body.get("prompt_eval_count", 0), body.get("eval_count", 0)
+        prompt_s, answer_s = sec("prompt_eval_duration"), sec("eval_duration")
+        logger.info(
+            f"Ollama timing for '{model_name}': load {sec('load_duration'):.1f}s | "
+            f"prompt {prompt_tokens} tokens in {prompt_s:.1f}s "
+            f"({prompt_tokens / prompt_s if prompt_s else 0:.0f} tok/s) | "
+            f"answer {answer_tokens} tokens in {answer_s:.1f}s "
+            f"({answer_tokens / answer_s if answer_s else 0:.1f} tok/s)"
+        )
+    except Exception:
+        pass  # timing is only a diagnostic; never let it break a review
+
+
 def _call_ollama(prompt: str, model_name: str, timeout: int) -> Dict[str, Any]:
     url = f"{settings.ollama_host}/api/generate"
     payload = {
@@ -117,12 +176,12 @@ def _call_ollama(prompt: str, model_name: str, timeout: int) -> Dict[str, Any]:
         "prompt": prompt,
         "format": _llm_schema(),
         "stream": False,
-        "keep_alive": KEEP_ALIVE,
+        "keep_alive": _cfg("llm_keep_alive"),
         "options": {
             "temperature": 0.1,
             "seed": 7,
-            "num_ctx": NUM_CTX,
-            "num_predict": NUM_PREDICT,
+            "num_ctx": int(_cfg("llm_num_ctx")),
+            "num_predict": int(_cfg("llm_num_predict")),
         },
     }
     request = urllib.request.Request(
@@ -143,13 +202,16 @@ def _call_ollama(prompt: str, model_name: str, timeout: int) -> Dict[str, Any]:
             ) from err
         raise RuntimeError(f"Ollama returned HTTP {err.code}. {detail}") from err
     except (TimeoutError, socket.timeout) as err:
-        raise RuntimeError(
-            f"timed out after {timeout}s (a cold model load can be slow; the next call is usually faster)"
+        raise OllamaTimeout(
+            f"timed out after {timeout}s: the model is too slow on this hardware for this prompt "
+            f"(check 'ollama ps' for GPU use, or raise llm_timeout_seconds)"
         ) from err
     except urllib.error.URLError as err:
         if isinstance(err.reason, (TimeoutError, socket.timeout)):
-            raise RuntimeError(f"timed out after {timeout}s") from err
+            raise OllamaTimeout(f"timed out after {timeout}s") from err
         raise RuntimeError(f"cannot reach Ollama at {settings.ollama_host}: {err.reason}") from err
+
+    _log_speed(model_name, body)
 
     raw = body.get("response") if isinstance(body, dict) else None
     if not raw:
@@ -228,7 +290,7 @@ def _candidate_models() -> List[str]:
 def analyze_changeset(change_set: ChangeSet) -> Tuple[PopupPayload, str]:
     """Review a change set. Always returns (popup, detailed_markdown); never raises."""
     prompt = _build_prompt(change_set)
-    timeout = max(MIN_TIMEOUT_SECONDS, settings.tier1_timeout_seconds + settings.tier2_timeout_seconds)
+    timeout = int(_cfg("llm_timeout_seconds"))
 
     last_error = "no model configured"
     for index, model in enumerate(_candidate_models()):
@@ -242,6 +304,10 @@ def analyze_changeset(change_set: ChangeSet) -> Tuple[PopupPayload, str]:
         except Exception as exc:  # fail open: any problem moves on to the next model
             last_error = _short(exc)
             logger.warning(f"{role.capitalize()} model '{model}' failed: {last_error}")
+            if isinstance(exc, OllamaTimeout):
+                # Same machine, same slowness: a second model would only double the wait.
+                logger.info("Skipping the fallback model after a timeout.")
+                break
             continue
 
         logger.info(f"Model '{model}' answered in {time.monotonic() - started:.1f}s")

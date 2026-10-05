@@ -1,0 +1,24 @@
+{
+  "features": [
+    "year",
+    "la",
+    "ld",
+    "nf",
+    "nd",
+    "ns",
+    "ent",
+    "ndev",
+    "age",
+    "nuc",
+    "aexp",
+    "arexp",
+    "asexp"
+  ],
+  "log1p_transforms": [
+    "la",
+    "ld",
+    "nf",
+    "nd",
+    "ns"
+  ]
+}

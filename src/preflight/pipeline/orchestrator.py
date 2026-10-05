@@ -22,6 +22,7 @@ from preflight.core.models import (
     PushOutcome,
     Report,
     ReportMetadata,
+    RiskLevel,
 )
 from preflight.git.diff_extractor import extract_file_changes
 from preflight.git.ref_parser import ParsedRef
@@ -53,7 +54,7 @@ def _analyze(change_set: ChangeSet) -> Tuple[PopupPayload, str]:
         return build_unavailable_payload(change_set, "LLM engine is not available")
 
     try:
-        logger.info(f"Tier 1/2: Sending {len(change_set.files)} file(s) to Ollama ({settings.llm_model_name})...")
+        logger.info(f"Tier 2: Sending {len(change_set.files)} file(s) to Ollama ({settings.llm_model_name})...")
         return analyze_changeset(change_set)
     except Exception as exc:
         logger.opt(exception=True).error("AI analysis crashed unexpectedly.")
@@ -132,12 +133,56 @@ def execute_pipeline(refs: List[ParsedRef]) -> int:
         files=file_changes,
     )
 
-    # ---- Tier 1/2: AI review -----------------------------------------------
-    popup_payload, detailed_md = _analyze(change_set)
+    # ---- Tier 1: Fast ML Filter --------------------------------------------
+    logger.debug("Tier 1: Running fast ML filter...")
+    ml_result = None
+    try:
+        from preflight.risk.ml_model import MLRiskAnalyzer
+        
+        old_ref = active_ref.remote_sha
+        new_ref = active_ref.local_sha
+        
+        # Git empty tree hash handles new branch pushes where the remote SHA is all zeros
+        if old_ref == "0000000000000000000000000000000000000000":
+            old_ref = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
+            
+        analyzer = MLRiskAnalyzer()
+        ml_result = analyzer.analyze(old_ref, new_ref)
+        logger.info(f"Tier 1 ML Result: {ml_result['risk_level']} ({ml_result['confidence_percent']}%)")
+        
+    except ImportError as exc:
+        logger.warning(f"ML model not yet available: {exc}. Proceeding to LLM.")
+    except Exception as exc:
+        logger.warning(f"Tier 1 ML Filter failed: {exc}. Falling back to full LLM analysis.")
+
+    # ---- Tier 2: LLM Synthesis ---------------------------------------------
+    if ml_result and ml_result['risk_level'] == "LOW":
+        logger.info("Tier 1 ML Filter approved the commit. Bypassing LLM.")
+        popup_payload = PopupPayload(
+            risk_level=RiskLevel.LOW,
+            confidence=ml_result['confidence_percent'],
+            impact_summary=[
+                "XGBoost Fast-Track Approval: No high-risk structural anomalies detected.",
+                f"Metrics: {ml_result['raw_features'].get('la', 0)} lines added across {ml_result['raw_features'].get('nf', 0)} files.",
+                "Bypassed LLM generation for zero-latency push."
+            ],
+            checklist=["[ ] Review the diff manually before pushing"]
+        )
+        detailed_md = (
+            f"# Fast-Track ML Approval\n\n"
+            f"This commit was scored as **LOW RISK** by the XGBoost classifier "
+            f"with a {ml_result['confidence_percent']}% bug probability.\n\n"
+            f"Generative AI review was bypassed to save time and compute."
+        )
+    else:
+        if ml_result:
+            logger.info(f"Tier 1 ML flagged commit as {ml_result['risk_level']}. Waking up LLM for synthesis...")
+            # Note: In Step 12.2, we will inject the SHAP features into the change_set here!
+        popup_payload, detailed_md = _analyze(change_set)
 
     # ---- Report assembly and storage ---------------------------------------
     report_id = uuid.uuid4()
-    analysis_ms = int((time.monotonic() - started) * 1000)  # excludes the time the human spends deciding
+    analysis_ms = int((time.monotonic() - started) * 1000)
 
     meta = ReportMetadata(
         report_id=report_id,
@@ -171,7 +216,6 @@ def execute_pipeline(refs: List[ParsedRef]) -> int:
 
     logger.info("Developer approved the push.")
     if saved:
-        # Record the decision now; the watcher fills in the real push outcome later.
         _store("recording the decision", PushReportDAO.update_decision_and_outcome,
                str(report_id), Decision.CONTINUE, PushOutcome.PENDING)
         _start_watcher(str(report_id), active_ref)
