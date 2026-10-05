@@ -39,3 +39,17 @@ def get_author_email() -> str:
 def get_author_name() -> str:
     """Gets the Git user's configured name."""
     return _run_git(["git", "config", "user.name"])
+
+def get_latest_commit_message() -> str:
+    """Extracts the commit message of the most recent local commit."""
+    try:
+        result = subprocess.run(
+            ["git", "log", "-1", "--pretty=%B"], 
+            capture_output=True, 
+            text=True, 
+            check=True
+        )
+        return result.stdout.strip()
+    except Exception as e:
+        logger.debug(f"Failed to extract commit message: {e}")
+        return "Commit details unavailable"

@@ -26,7 +26,7 @@ from preflight.core.models import (
 )
 from preflight.git.diff_extractor import extract_file_changes
 from preflight.git.ref_parser import ParsedRef
-from preflight.git.repo_info import get_repo_name, get_repo_root
+from preflight.git.repo_info import get_repo_name, get_repo_root, get_latest_commit_message
 from preflight.pipeline.fallback import build_unavailable_payload
 from preflight.storage.repositories import PushReportDAO
 
@@ -163,6 +163,9 @@ def execute_pipeline(refs: List[ParsedRef]) -> int:
         logger.info(f"Tier 1 ML scored commit as {ml_result['risk_level']}. Waking up LLM for synthesis...")
         
     popup_payload, detailed_md = _analyze(change_set)
+
+    # Inject the Git commit message dynamically before sending payload to the database
+    popup_payload.commit_message = get_latest_commit_message()
 
     # ---- Report assembly and storage ---------------------------------------
     report_id = uuid.uuid4()
