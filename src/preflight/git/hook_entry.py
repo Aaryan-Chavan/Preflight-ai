@@ -24,6 +24,21 @@ def run_hook():
         # <local ref> <local sha1> <remote ref> <remote sha1>
         # There can be multiple lines if the user pushes multiple branches at once.
         raw_refs = sys.stdin.readlines()
+
+        # --- ADD THIS BLOCK ---
+        # Reconnect standard input to the terminal so the UI can prompt the developer
+        try:
+            if os.name == 'nt':
+                sys.stdin = open('CON', 'r')
+            else:
+                sys.stdin = open('/dev/tty', 'r')
+        except Exception as e:
+            logger.debug(f"Could not reconnect terminal: {e}")
+        # ----------------------
+
+        if not raw_refs:
+            logger.info("No refs provided by Git on stdin. Allowing push.")
+            sys.exit(0)
         
         if not raw_refs:
             logger.info("No refs provided by Git on stdin. Allowing push.")
@@ -66,3 +81,5 @@ def run_hook():
         else:
             print("\n[Pre-Flight AI] ❌ Pipeline crashed and fail_open=False. Blocking push.", file=sys.stderr)
             sys.exit(1)
+if __name__ == "__main__":
+    run_hook()

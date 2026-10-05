@@ -1,3 +1,4 @@
+#settings.py
 import json
 from typing import List, Literal
 from pydantic import Field
@@ -21,7 +22,7 @@ class PreflightSettings(BaseSettings):
         description="Primary Ollama model for AI reasoning."
     )
     llm_fallback_model: str = Field(
-        default="gemma3:4b-instruct", 
+        default="gemma3:4b", 
         description="Secondary fallback model if Qwen fails."
     )
     ollama_host: str = Field(

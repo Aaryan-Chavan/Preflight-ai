@@ -14,6 +14,8 @@ def get_connection() -> Generator[sqlite3.Connection, None, None]:
     Context manager yielding a highly optimized SQLite connection.
     Enables WAL mode for concurrent reads/writes and enforces foreign keys.
     """
+    # Ensure the parent directory exists before connecting
+    DB_PATH.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(DB_PATH, timeout=10.0)
     
     # Return rows as dictionary-like objects instead of plain tuples

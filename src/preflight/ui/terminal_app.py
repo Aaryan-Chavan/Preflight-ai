@@ -10,15 +10,14 @@ from preflight.core.models import Report, Decision, RiskLevel
 console = Console()
 
 def show_review_ui(report: Report) -> Decision:
-    """
-    Renders the beautiful Rich terminal UI and blocks until the user 
-    approves or cancels the Git push.
-    """
-    # Add some breathing room in the terminal
     console.print("\n")
     
     # 1. Color mapping based on AI Risk Level
-    if report.popup.risk_level == RiskLevel.LOW:
+    if getattr(report.popup.risk_level, "name", str(report.popup.risk_level)) in ("UNKNOWN", "UNAVAILABLE"):
+        border_color = "dim"
+        risk_text = "[bold dim]UNAVAILABLE[/bold dim]"
+        default_choice = True
+    elif report.popup.risk_level == RiskLevel.LOW:
         border_color = "green"
         risk_text = "[bold green]LOW RISK[/bold green]"
         default_choice = True
@@ -41,13 +40,16 @@ def show_review_ui(report: Report) -> Decision:
     table.add_row("Target Branch:", f"[magenta]{report.meta.branch}[/magenta]")
     table.add_row("Analysis Time:", f"{report.meta.analysis_ms}ms")
     
-    # 3. Format the Key Concerns List
+    # 3. Format the Verification Checklist (formerly key_concerns)
     concerns_text = Text()
-    if report.popup.key_concerns:
-        for concern in report.popup.key_concerns:
-            concerns_text.append(f"• {concern}\n")
+    if report.popup.verification_checklist:
+        for item in report.popup.verification_checklist:
+            concerns_text.append(f"• [ ] {item}\n")
     else:
         concerns_text.append("None detected. Code looks clean!\n", style="green")
+
+    # Safely extract the impact summary (handling both lists and strings)
+    impact = "\n".join(report.popup.impact_summary) if isinstance(report.popup.impact_summary, list) else str(report.popup.impact_summary)
 
     # 4. Assemble the Panels
     header_panel = Panel(
@@ -59,7 +61,7 @@ def show_review_ui(report: Report) -> Decision:
     )
     
     content_panel = Panel(
-        f"{report.popup.summary}\n\n[bold cyan]Key Observations:[/bold cyan]\n{concerns_text}",
+        f"{impact}\n\n[bold cyan]Verification Checklist:[/bold cyan]\n{concerns_text}",
         border_style="dim",
         expand=False
     )
@@ -71,16 +73,13 @@ def show_review_ui(report: Report) -> Decision:
     # 6. Interactive Prompt (Blocking)
     try:
         console.print("\n")
-        # Ask the user to confirm. If Risk is LOW, default to 'Y', otherwise default to 'N'
         proceed = Confirm.ask(
             "[bold]Do you want to proceed with this Git push?[/bold]",
             default=default_choice
         )
-        
         return Decision.CONTINUE if proceed else Decision.CANCEL
         
     except KeyboardInterrupt:
-        # If the developer panics and hits Ctrl+C, we safely cancel the push
         logger.info("Developer aborted via KeyboardInterrupt.")
         console.print("\n[bold red]Push aborted by user.[/bold red]")
         return Decision.CANCEL
