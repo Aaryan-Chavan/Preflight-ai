@@ -1,17 +1,13 @@
 import sqlite3
 import json
 import os
-from datetime import datetime
 import firebase_admin
 from firebase_admin import credentials, firestore
 
 # 1. Initialize Firebase Admin
-# Make sure you have downloaded your service account JSON from Firebase Console 
-# and saved it as 'serviceAccountKey.json' in your root folder.
 cred_path = "serviceAccountKey.json"
 if not os.path.exists(cred_path):
     print(f"Error: Could not find Firebase service account key at '{cred_path}'.")
-    print("Please download it from your Firebase Project Settings -> Service Accounts.")
     exit(1)
 
 cred = credentials.Certificate(cred_path)
@@ -20,31 +16,59 @@ if not firebase_admin._apps:
 
 db = firestore.client()
 
+# 2. Find 'preflight.db' automatically
+def find_db():
+    for root, dirs, files in os.walk("."):
+        if "preflight.db" in files:
+            return os.path.join(root, "preflight.db")
+    return None
+
 def sync_reports():
-    conn = sqlite3.connect("preflight.db")
+    db_path = find_db()
+    if not db_path:
+        print("Error: Could not find 'preflight.db' anywhere in the project.")
+        return
+
+    print(f"Found database at: {db_path}")
+    conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
     cursor = conn.cursor()
 
-    # Fetch reports from local SQLite database
+    # Inspect available tables in SQLite
+    cursor.execute("SELECT name FROM sqlite_master WHERE type='table';")
+    tables = [row["name"] for row in cursor.fetchall()]
+    print(f"Available SQLite tables: {tables}")
+
+    if not tables:
+        print("Error: No tables found in the SQLite database yet. Run a git push to generate reports.")
+        conn.close()
+        return
+
+    # Pick the most likely table name
+    target_table = "reports" if "reports" in tables else tables[0]
+    print(f"Reading from table: '{target_table}'...")
+
     try:
-        cursor.execute("SELECT * FROM reports ORDER BY timestamp DESC LIMIT 20")
+        cursor.execute(f"SELECT * FROM {target_table} ORDER BY timestamp DESC LIMIT 20")
         rows = cursor.fetchall()
     except Exception as e:
-        print(f"Error reading SQLite database: {e}")
+        print(f"Error querying table {target_table}: {e}")
+        conn.close()
         return
 
     print(f"Found {len(rows)} local report(s). Syncing to Firestore...")
 
     for row in rows:
         report_data = dict(row)
-        report_id = str(report_data.get("report_id"))
+        report_id = str(report_data.get("report_id") or report_data.get("id") or "unknown-id")
 
-        # Convert JSON strings back to dicts if stored as text
-        if "popup_payload" in report_data and isinstance(report_data["popup_payload"], str):
-            try:
-                report_data["popup_payload"] = json.loads(report_data["popup_payload"])
-            except:
-                pass
+        # Safely parse JSON fields if stored as strings
+        for field in ["popup_payload", "popup", "meta"]:
+            if field in report_data and isinstance(report_data[field], str):
+                try:
+                    report_data[field] = json.loads(report_data[field])
+                except:
+                    pass
 
         # Push to Firestore collection 'reports'
         doc_ref = db.collection("reports").document(report_id)
