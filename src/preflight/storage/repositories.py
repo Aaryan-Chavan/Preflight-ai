@@ -97,7 +97,6 @@ class PushReportDAO:
                     """,
                     (str(report.meta.report_id),)
                 )
-
                 conn.commit()
                 logger.debug(f"Successfully saved report {report.meta.report_id} to SQLite.")
             except Exception as e:

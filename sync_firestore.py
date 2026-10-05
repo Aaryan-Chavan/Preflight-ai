@@ -1,82 +1,94 @@
 import sqlite3
 import json
 import os
+from datetime import datetime
 import firebase_admin
 from firebase_admin import credentials, firestore
+from platformdirs import PlatformDirs
 
-# 1. Initialize Firebase Admin
-cred_path = "serviceAccountKey.json"
+# 1. Initialize Firebase
+cred_path = os.path.abspath("serviceAccountKey.json")
 if not os.path.exists(cred_path):
-    print(f"Error: Could not find Firebase service account key at '{cred_path}'.")
+    print(f"Error: Could not find '{cred_path}'.")
     exit(1)
 
 cred = credentials.Certificate(cred_path)
 if not firebase_admin._apps:
     firebase_admin.initialize_app(cred)
-
 db = firestore.client()
 
-# 2. Find 'preflight.db' automatically
-def find_db():
-    for root, dirs, files in os.walk("."):
-        if "preflight.db" in files:
-            return os.path.join(root, "preflight.db")
-    return None
-
 def sync_reports():
-    db_path = find_db()
-    if not db_path:
-        print("Error: Could not find 'preflight.db' anywhere in the project.")
+    # 2. Match your app's exact path logic
+    dirs = PlatformDirs(appname="preflight-ai", appauthor=False)
+    db_path = os.path.join(dirs.user_data_dir, "preflight.db")
+    
+    print(f"Connecting to database at: {db_path}")
+    
+    if not os.path.exists(db_path):
+        print("Error: Database not found. Run a git push first!")
         return
 
-    print(f"Found database at: {db_path}")
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
     cursor = conn.cursor()
 
-    # Inspect available tables in SQLite
-    cursor.execute("SELECT name FROM sqlite_master WHERE type='table';")
-    tables = [row["name"] for row in cursor.fetchall()]
-    print(f"Available SQLite tables: {tables}")
-
-    if not tables:
-        print("Error: No tables found in the SQLite database yet. Run a git push to generate reports.")
-        conn.close()
-        return
-
-    # Pick the most likely table name
-    target_table = "reports" if "reports" in tables else tables[0]
-    print(f"Reading from table: '{target_table}'...")
-
+    # 3. Read pending reports from the 3-table normalized schema
+    query = """
+        SELECT 
+            p.report_id, p.branch, p.timestamp, p.risk_level, 
+            p.confidence, p.decision, p.outcome, p.analysis_ms,
+            r.popup_json, r.detailed_md
+        FROM pushes p
+        JOIN reports r ON p.report_id = r.report_id
+        JOIN sync_outbox s ON p.report_id = s.report_id
+        WHERE s.status = 'pending'
+        ORDER BY p.timestamp ASC
+    """
+    
     try:
-        cursor.execute(f"SELECT * FROM {target_table} ORDER BY timestamp DESC LIMIT 20")
+        cursor.execute(query)
         rows = cursor.fetchall()
     except Exception as e:
-        print(f"Error querying table {target_table}: {e}")
+        print(f"Error reading tables: {e}")
         conn.close()
         return
 
-    print(f"Found {len(rows)} local report(s). Syncing to Firestore...")
+    if not rows:
+        print("No pending reports found in the outbox. You are fully synced!")
+        conn.close()
+        return
+
+    print(f"Found {len(rows)} pending report(s). Syncing to Firestore...")
 
     for row in rows:
         report_data = dict(row)
-        report_id = str(report_data.get("report_id") or report_data.get("id") or "unknown-id")
+        report_id = report_data["report_id"]
 
-        # Safely parse JSON fields if stored as strings
-        for field in ["popup_payload", "popup", "meta"]:
-            if field in report_data and isinstance(report_data[field], str):
-                try:
-                    report_data[field] = json.loads(report_data[field])
-                except:
-                    pass
+        # Parse JSON payload so Firestore stores it as an object
+        if report_data.get("popup_json"):
+            try:
+                report_data["popup"] = json.loads(report_data.pop("popup_json"))
+            except Exception:
+                pass
+                
+        # Convert SQLite text string to a native Firestore Timestamp
+        if report_data.get("timestamp"):
+            try:
+                report_data["timestamp"] = datetime.fromisoformat(report_data["timestamp"])
+            except Exception as e:
+                print(f"Timestamp error for {report_id}: {e}")
 
-        # Push to Firestore collection 'reports'
+        # Sync to Firestore
         doc_ref = db.collection("reports").document(report_id)
         doc_ref.set(report_data, merge=True)
         print(f"Synced report {report_id} -> Firestore")
 
+        # Mark as synced locally
+        cursor.execute("UPDATE sync_outbox SET status = 'synced' WHERE report_id = ?", (report_id,))
+
+    conn.commit()
     conn.close()
-    print("Sync complete!")
+    print("Sync queue cleared successfully!")
 
 if __name__ == "__main__":
     sync_reports()
