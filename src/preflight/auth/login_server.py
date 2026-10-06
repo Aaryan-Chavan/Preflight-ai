@@ -1,37 +1,8 @@
-import json
-import socket
-import secrets
-import webbrowser
-from http.server import BaseHTTPRequestHandler, HTTPServer
-from typing import Optional, Dict
-from loguru import logger
-
-# For development, we assume the React dashboard runs on Vite's default port.
-# In production, this would be updated to your Firebase Hosting URL (e.g., https://your-app.web.app/cli-login)
-LOGIN_URL_TEMPLATE = "http://localhost:5173/cli-login?port={port}&state={state}"
-
-class AuthCallbackHandler(BaseHTTPRequestHandler):
-    """
-    A single-request HTTP server handler to receive the Firebase tokens 
-    from the React frontend via a local POST request.
-    """
-    captured_tokens: Optional[Dict[str, str]] = None
-    expected_state: str = ""
-
-    def do_OPTIONS(self):
-        """Handle CORS preflight requests from the browser."""
-        self.send_response(200)
-        self.send_header("Access-Control-Allow-Origin", "*")
-        self.send_header("Access-Control-Allow-Methods", "POST, OPTIONS")
-        self.send_headerHere is the complete, original code for the local loopback server. This module is responsible for catching the authentication tokens from your web browser after a successful Firebase login. 
-
-Create this file at **`src\preflight\auth\login_server.py`**:
-
-```python
 import urllib.parse
 import socketserver
 import http.server
 import threading
+import webbrowser
 from typing import Optional, Dict
 from loguru import logger
 
@@ -114,17 +85,15 @@ def start_loopback_server(timeout_seconds: int = 120) -> Optional[Dict[str, str]
     # Bind to port 0 to let the OS automatically pick an available random port
     with socketserver.TCPServer(("127.0.0.1", 0), CallbackHandler) as httpd:
         port = httpd.server_address[1]
-        logger.debug(f"Local auth listener bound to [http://127.0.0.1](http://127.0.0.1):{port}")
+        logger.debug(f"Local auth listener bound to http://127.0.0.1:{port}")
         
         # Run server in a daemon thread so it doesn't block program exit on failure
         server_thread = threading.Thread(target=httpd.serve_forever, daemon=True)
         server_thread.start()
 
         # Generate the frontend login URL with the dynamic port appended
-        # Note: In production, replace the domain with your actual Firebase Hosting URL
         frontend_login_url = f"http://localhost:5173/cli-login?callback_port={port}"
         
-        import webbrowser
         logger.info("Opening browser for authentication...")
         webbrowser.open(frontend_login_url)
 

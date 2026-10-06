@@ -36,10 +36,10 @@ class PushReportDAO:
         """
         with get_connection() as conn:
             try:
-                # 1. Resolve Repo ID
+                # 1. Resolve Repo ID using the absolute project path
                 repo_id = cls._get_or_create_repo(
                     conn, 
-                    path=report.meta.repo_name, # Using name as path placeholder for now
+                    path=report.meta.repo_path,
                     name=report.meta.repo_name,
                     remote_url=""
                 )
@@ -64,7 +64,7 @@ class PushReportDAO:
                         report.meta.remote_sha,
                         report.meta.timestamp.isoformat(),
                         report.popup.risk_level.value,
-                        0.0, # risk_prob (placeholder until ML)
+                        0.0,
                         report.popup.confidence_percentage / 100.0,
                         report.meta.decision.value,
                         report.meta.outcome.value,

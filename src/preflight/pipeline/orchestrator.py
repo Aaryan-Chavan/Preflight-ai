@@ -4,9 +4,8 @@ The return value is the hook's exit code: 0 lets the push continue, 1 cancels it
 
 Everything except the developer's own decision is fail-soft: a broken stage is logged with its
 traceback and replaced by a safe default, so a bug in Pre-Flight never blocks a push.
-
-Place at: src/preflight/pipeline/orchestrator.py
 """
+import sys
 import time
 import uuid
 from datetime import datetime, timezone
@@ -26,8 +25,7 @@ from preflight.core.models import (
 )
 from preflight.git.diff_extractor import extract_file_changes
 from preflight.git.ref_parser import ParsedRef
-from preflight.git.repo_info import get_repo_name, get_repo_root, get_latest_commit_message
-from preflight.pipeline.fallback import build_unavailable_payload
+from preflight.git.repo_info import get_repo_name, get_repo_root, get_commit_message
 from preflight.storage.repositories import PushReportDAO
 
 
@@ -36,7 +34,6 @@ def _install_id() -> str:
 
 
 def _store(description: str, action: Callable[..., Any], *args: Any) -> bool:
-    """Run a local-database action. A storage failure is logged but must never stop the push."""
     try:
         action(*args)
         return True
@@ -46,7 +43,6 @@ def _store(description: str, action: Callable[..., Any], *args: Any) -> bool:
 
 
 def _analyze(change_set: ChangeSet) -> Tuple[PopupPayload, str]:
-    """Run the AI review, degrading to a complete 'unavailable' report on any problem."""
     try:
         from preflight.pipeline.llm_engine import analyze_changeset
     except ImportError as exc:
@@ -62,7 +58,6 @@ def _analyze(change_set: ChangeSet) -> Tuple[PopupPayload, str]:
 
 
 def _ask_developer(report: Report) -> Decision:
-    """Show the review UI and return CONTINUE or CANCEL. Fails open if the UI is missing or broken."""
     try:
         from preflight.ui.terminal_app import show_review_ui
     except ImportError as exc:
@@ -70,7 +65,7 @@ def _ask_developer(report: Report) -> Decision:
         return Decision.CONTINUE
 
     try:
-        decision = show_review_ui(report)  # blocks until the developer chooses
+        decision = show_review_ui(report)
     except Exception:
         logger.opt(exception=True).error("Review UI failed. Failing open: the push will continue.")
         return Decision.CONTINUE
@@ -82,7 +77,6 @@ def _ask_developer(report: Report) -> Decision:
 
 
 def _start_watcher(report_id: str, ref: ParsedRef) -> None:
-    """Start the background process that records whether the push really succeeded."""
     try:
         from preflight.git.push_watcher import spawn_watcher
     except ImportError as exc:
@@ -101,7 +95,6 @@ def _start_watcher(report_id: str, ref: ParsedRef) -> None:
 
 
 def execute_pipeline(refs: List[ParsedRef]) -> int:
-    """Run the full pipeline for one push. Returns 0 to allow the push, 1 to cancel it."""
     started = time.monotonic()
     logger.info("Initializing AI Analysis Pipeline...")
 
@@ -116,6 +109,22 @@ def execute_pipeline(refs: List[ParsedRef]) -> int:
         )
     active_ref = actionable[0]
 
+    # ---- Auth Gate: Check Project-Specific Credentials ---------------------
+    from preflight.auth.token_store import get_credentials
+    from preflight.cli.auth_cmd import run_login
+    
+    repo_root = get_repo_root()
+    if not get_credentials(repo_root):
+        logger.info("Project unauthenticated. Triggering login flow...")
+        print(f"\n[Pre-Flight AI] 🔒 Authentication required for project: {get_repo_name()}")
+        try:
+            run_login()
+        except SystemExit as e:
+            if e.code != 0:
+                print("\n❌ Push blocked: Authentication is required.", file=sys.stderr)
+                return 1
+    # ------------------------------------------------------------------------
+
     # ---- Tier 0: data extraction -------------------------------------------
     logger.debug(f"Tier 0: Extracting diffs for {active_ref.local_ref}...")
     file_changes = extract_file_changes(active_ref)
@@ -126,7 +135,7 @@ def execute_pipeline(refs: List[ParsedRef]) -> int:
     display_branch = active_ref.local_ref.removeprefix("refs/heads/")
     change_set = ChangeSet(
         repo_name=get_repo_name(),
-        repo_path=get_repo_root(),
+        repo_path=repo_root,
         branch=display_branch,
         local_sha=active_ref.local_sha,
         remote_sha=active_ref.remote_sha,
@@ -138,19 +147,15 @@ def execute_pipeline(refs: List[ParsedRef]) -> int:
     ml_result = None
     try:
         from preflight.risk.ml_model import MLRiskAnalyzer
-        
         old_ref = active_ref.remote_sha
         new_ref = active_ref.local_sha
         
-        # Git empty tree hash handles new branch pushes where the remote SHA is all zeros
         if old_ref == "0000000000000000000000000000000000000000":
             old_ref = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
             
         analyzer = MLRiskAnalyzer()
         ml_result = analyzer.analyze(old_ref, new_ref)
         logger.info(f"Tier 1 ML Result: {ml_result['risk_level']} ({ml_result['confidence_percent']}%)")
-        
-        # Inject the ML result into the ChangeSet so the LLM can read it
         change_set.ml_risk_result = ml_result
         
     except ImportError as exc:
@@ -163,9 +168,7 @@ def execute_pipeline(refs: List[ParsedRef]) -> int:
         logger.info(f"Tier 1 ML scored commit as {ml_result['risk_level']}. Waking up LLM for synthesis...")
         
     popup_payload, detailed_md = _analyze(change_set)
-
-    # Inject the Git commit message dynamically before sending payload to the database
-    popup_payload.commit_message = get_latest_commit_message()
+    popup_payload.commit_message = get_commit_message(active_ref.local_sha)
 
     # ---- Report assembly and storage ---------------------------------------
     report_id = uuid.uuid4()
@@ -174,6 +177,7 @@ def execute_pipeline(refs: List[ParsedRef]) -> int:
     meta = ReportMetadata(
         report_id=report_id,
         install_id=_install_id(),
+        repo_path=change_set.repo_path,
         repo_name=change_set.repo_name,
         branch=display_branch,
         local_sha=active_ref.local_sha,
@@ -193,7 +197,6 @@ def execute_pipeline(refs: List[ParsedRef]) -> int:
     logger.info("Triggering interactive UI...")
     decision = _ask_developer(report)
 
-    # ---- Final outcome -----------------------------------------------------
     if decision == Decision.CANCEL:
         logger.info("Developer cancelled the push.")
         if saved:

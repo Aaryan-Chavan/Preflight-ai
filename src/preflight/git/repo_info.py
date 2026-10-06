@@ -40,16 +40,17 @@ def get_author_name() -> str:
     """Gets the Git user's configured name."""
     return _run_git(["git", "config", "user.name"])
 
-def get_latest_commit_message() -> str:
-    """Extracts the commit message of the most recent local commit."""
+def get_commit_message(sha: str = "HEAD") -> str:
+    """Extracts the exact commit message for a specific Git SHA."""
     try:
+        # Pass the exact SHA to git log instead of relying on HEAD
         result = subprocess.run(
-            ["git", "log", "-1", "--pretty=%B"], 
+            ["git", "log", "-1", "--pretty=%B", sha], 
             capture_output=True, 
             text=True, 
             check=True
         )
         return result.stdout.strip()
     except Exception as e:
-        logger.debug(f"Failed to extract commit message: {e}")
+        logger.debug(f"Failed to extract commit message for {sha}: {e}")
         return "Commit details unavailable"

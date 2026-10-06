@@ -3,7 +3,7 @@ import { getFirestore } from "firebase/firestore";
 import { getAuth, GoogleAuthProvider } from "firebase/auth";
 
 const firebaseConfig = {
-  apiKey: "AIzaSyB4eLLKNu0u-GUigSNMEX0Wwicyg0Aowys",
+  apiKey: "AIzaSyB4eLLKNuOu-GUIgSNMEX0Wwicyg0Aowys",
   authDomain: "preflight-aaryan1910.firebaseapp.com",
   projectId: "preflight-aaryan1910",
   storageBucket: "preflight-aaryan1910.firebasestorage.app",

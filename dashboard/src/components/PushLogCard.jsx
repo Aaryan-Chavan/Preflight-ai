@@ -14,70 +14,96 @@ export default function PushLogCard({ report }) {
   // Styling logic based on risk decision
   const isSuccess = outcome.toLowerCase() === 'pass' || outcome === 'SUCCESS';
   const isFail = outcome.toLowerCase() === 'fail';
-  
-  const statusColor = isSuccess 
-    ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' 
-    : isFail
-    ? 'bg-red-500/10 text-red-400 border-red-500/20'
-    : 'bg-amber-500/10 text-amber-400 border-amber-500/20';
 
-  const indicatorColor = isSuccess ? 'bg-emerald-500' : isFail ? 'bg-red-500' : 'bg-amber-500';
+  const statusColor = isSuccess
+    ? 'bg-emerald-500/10 text-emerald-400 ring-emerald-500/25'
+    : isFail
+    ? 'bg-rose-500/10 text-rose-400 ring-rose-500/25'
+    : 'bg-amber-500/10 text-amber-400 ring-amber-500/25';
+
+  const indicatorColor = isSuccess ? 'bg-emerald-500' : isFail ? 'bg-rose-500' : 'bg-amber-500';
+
+  const panelId = `review-${report.id ?? repoName}`;
 
   return (
-    <div className="bg-slate-900 border border-slate-800 rounded-xl p-6 hover:border-indigo-500/50 transition-all shadow-lg hover:shadow-indigo-500/10 relative overflow-hidden group">
-      
-      {/* Side Status Indicator */}
-      <div className={`absolute left-0 top-0 bottom-0 w-1 ${indicatorColor}`}></div>
+    <article className="relative overflow-hidden rounded-xl border border-zinc-800 bg-zinc-900/50 transition-colors hover:border-zinc-700">
+      {/* Side status indicator */}
+      <div className={`absolute inset-y-0 left-0 w-[3px] ${indicatorColor}`} aria-hidden="true"></div>
 
-      <div className="flex justify-between items-start mb-5 pl-2">
-        <div>
-          <h2 className="text-xl font-bold text-white flex items-center gap-2">
-            <svg className="w-5 h-5 text-slate-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"></path></svg>
-            {repoName}
-          </h2>
-          <div className="text-sm text-slate-400 mt-2 flex items-center gap-3 font-mono">
-            <span className="bg-slate-950 px-2.5 py-1 rounded-md border border-slate-800 text-indigo-300 flex items-center gap-1">
-              <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M8 7v8a2 2 0 002 2h6M8 7V5a2 2 0 012-2h4.586a1 1 0 01.707.293l4.414 4.414a1 1 0 01.293.707V15a2 2 0 01-2 2h-2M8 7H6a2 2 0 00-2 2v10a2 2 0 002 2h8a2 2 0 002-2v-2"></path></svg>
-              {branch}
-            </span>
-            <span className="text-slate-600">•</span>
-            <span>{timestamp}</span>
+      <div className="p-5 pl-6">
+        <div className="flex items-start justify-between gap-4">
+          <div className="min-w-0">
+            {/* Commit message is the primary thing people scan for */}
+            <h2 className="truncate text-base font-semibold text-white" title={commitMessage}>
+              {commitMessage}
+            </h2>
+
+            <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-2 text-sm text-zinc-400">
+              <span className="inline-flex items-center gap-1.5 font-medium text-zinc-300">
+                <svg className="h-4 w-4 text-zinc-500" fill="none" stroke="currentColor" strokeWidth="1.8" viewBox="0 0 24 24" aria-hidden="true">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
+                </svg>
+                {repoName}
+              </span>
+
+              <span className="inline-flex items-center gap-1.5 rounded-md border border-zinc-800 bg-zinc-950 px-2 py-0.5 font-mono text-xs text-indigo-300">
+                <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="1.8" viewBox="0 0 24 24" aria-hidden="true">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M6 3v12m0 0a3 3 0 103 3 3 3 0 00-3-3zm12-6a3 3 0 10-3-3 3 3 0 003 3zm0 0a9 9 0 01-9 9" />
+                </svg>
+                {branch}
+              </span>
+
+              <span className="inline-flex items-center gap-1.5 text-zinc-500">
+                <svg className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.8" viewBox="0 0 24 24" aria-hidden="true">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 6v6l4 2m5-2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+                {timestamp}
+              </span>
+            </div>
           </div>
-        </div>
-        
-        <div className={`px-4 py-1.5 rounded-full text-sm font-bold shadow-sm uppercase tracking-wide border ${statusColor}`}>
-          {outcome}
-        </div>
-      </div>
 
-      <div className="pl-2 mb-5">
-        <p className="text-xs text-slate-500 uppercase tracking-wider font-semibold mb-2">Commit Message</p>
-        <div className="bg-slate-950/50 border border-slate-800/80 rounded-lg p-3 text-sm text-slate-300 font-medium italic">
-          "{commitMessage}"
+          <span
+            className={`inline-flex shrink-0 items-center gap-1.5 rounded-full px-3 py-1 text-xs font-semibold uppercase ring-1 ring-inset ${statusColor}`}
+          >
+            <span className={`h-1.5 w-1.5 rounded-full ${indicatorColor}`}></span>
+            {outcome}
+          </span>
         </div>
-      </div>
 
-      <div className="pl-2">
         <button
           onClick={() => setIsExpanded(!isExpanded)}
-          className="w-full flex items-center justify-center gap-2 text-sm font-semibold bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 px-4 py-2.5 rounded-lg hover:bg-indigo-600 hover:text-white hover:border-indigo-600 transition-all duration-300"
+          aria-expanded={isExpanded}
+          aria-controls={panelId}
+          className="mt-4 inline-flex items-center gap-1.5 rounded-md text-sm font-medium text-indigo-400 transition-colors hover:text-indigo-300"
         >
-          <span>{isExpanded ? 'Hide AI Risk Summary' : 'View AI Risk Summary'}</span>
-          <svg className={`w-4 h-4 transition-transform duration-300 ${isExpanded ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 9l-7 7-7-7" />
+          <svg className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.8" viewBox="0 0 24 24" aria-hidden="true">
+            <path strokeLinecap="round" strokeLinejoin="round" d="M9.813 15.904 9 18.75l-.813-2.846a4.5 4.5 0 0 0-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 0 0 3.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 0 0 3.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 0 0-3.09 3.09ZM18.259 8.715 18 9.75l-.259-1.035a3.375 3.375 0 0 0-2.455-2.456L14.25 6l1.036-.259a3.375 3.375 0 0 0 2.455-2.456L18 2.25l.259 1.035a3.375 3.375 0 0 0 2.456 2.456L21.75 6l-1.035.259a3.375 3.375 0 0 0-2.456 2.456Z" />
+          </svg>
+          <span>{isExpanded ? 'Hide AI risk summary' : 'View AI risk summary'}</span>
+          <svg
+            className={`h-4 w-4 transition-transform duration-300 ${isExpanded ? 'rotate-180' : ''}`}
+            fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24" aria-hidden="true"
+          >
+            <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
           </svg>
         </button>
 
         {isExpanded && (
-          <div className="mt-4 bg-slate-950 p-5 rounded-lg border border-slate-800/80 shadow-inner overflow-x-auto">
-            <h3 className="text-xs uppercase text-slate-500 font-bold mb-3 tracking-wider">Multi-Agent Review</h3>
-            <pre className="text-sm text-slate-300 whitespace-pre-wrap font-mono leading-relaxed">
-              {llmSummary}
-            </pre>
+          <div id={panelId} className="mt-4 animate-reveal overflow-hidden rounded-lg border border-zinc-800 bg-zinc-950">
+            <div className="flex items-center justify-between border-b border-zinc-800 bg-zinc-900/60 px-4 py-2.5">
+              <h3 className="text-sm font-medium text-zinc-300">Multi-agent review</h3>
+              <span className={`inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-xs font-semibold uppercase ring-1 ring-inset ${statusColor}`}>
+                {outcome}
+              </span>
+            </div>
+            <div className="max-h-96 overflow-auto p-4">
+              <pre className="whitespace-pre-wrap break-words font-mono text-[13px] leading-relaxed text-zinc-300">
+                {llmSummary}
+              </pre>
+            </div>
           </div>
         )}
       </div>
-
-    </div>
+    </article>
   );
 }

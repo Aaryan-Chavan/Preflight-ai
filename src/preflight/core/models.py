@@ -98,6 +98,7 @@ class ReportMetadata(BaseModel):
     timestamp: datetime = Field(default_factory=datetime.now)
     install_id: str
     uid: Optional[str] = None
+    repo_path: str
     repo_name: str
     branch: str
     local_sha: str
@@ -107,7 +108,7 @@ class ReportMetadata(BaseModel):
     analysis_ms: int = 0
     pipeline_version: str = "0.1.0"
     sync_status: str = "pending"
-# testing
+
 class Report(BaseModel):
     meta: ReportMetadata
     popup: PopupPayload
